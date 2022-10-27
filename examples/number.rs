@@ -7,8 +7,9 @@ async fn main() -> Result<()> {
     env_logger::init();
     let mut runner = Container::new(
         5,
-        &|| { log::info!("asdffs"); std::thread::sleep(std::time::Duration::from_secs(1)); 4 },
-        &|item| { log::info!("{}", item); }
+        Some(10),
+        &|| { std::thread::sleep(std::time::Duration::from_secs(1)); 4 },
+        &|_item| { }
     )?;
     runner.run().await?;
     Ok(())

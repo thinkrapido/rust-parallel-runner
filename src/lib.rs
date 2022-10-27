@@ -47,18 +47,20 @@ pub type ConsumerFn<T> = dyn Fn(T) + Send + Sync;
 
 pub struct Container<'a, 'b, T> {
     max: usize,
+    iterations: Arc<RwLock<usize>>,
     current: Arc<RwLock<usize>>,
     next: Arc<RwLock<usize>>,
     producer: &'a ProducerFn<T>,
     consumer: &'b ConsumerFn<T>,
 }
 impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T> {
-    pub fn new(max: usize, producer: &'static ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
+    pub fn new(max: usize, iterations: Option<usize>, producer: &'static ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
         if max < 1 {
             bail!("max is null, this isn't allowed");
         }
         Ok(Self {
             max,
+            iterations: Arc::new(RwLock::new(iterations.unwrap_or(usize::MAX))),
             current: Arc::new(RwLock::new(usize::MAX)),
             next: Arc::new(RwLock::new(usize::MAX)),
             producer,
@@ -74,7 +76,6 @@ impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T
             *self.next.write().await -= 1;
             let p = self.producer;
             set.spawn(async move {
-                log::info!("next: {}", n);
                 (n, p())
             });
         }
@@ -83,10 +84,14 @@ impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T
         let heap = bin_heap.clone();
         let max = self.max;
         let next = self.next.clone();
+        let iterations = self.iterations.clone();
         let producer = self.producer;
         let jh_heap = spawn(async move {
             while let Some(result) = set.join_next().await {
                 heap.write().await.push(result?.into());
+                if *iterations.read().await == 0 {
+                    break;
+                }
                 while set.len() < max {
                     let n = *next.read().await;
                     *next.write().await -= 1;
@@ -102,9 +107,13 @@ impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T
 
         let consumer = self.consumer;
         let heap = bin_heap.clone();
+        let iterations = self.iterations.clone();
         let current = self.current.clone();
         let jh_consume = spawn(async move {
             loop {
+                if *iterations.read().await == 0 {
+                    break;
+                }
                 {
                     let peek = heap.read().await.peek().map(|data| data.idx);
                     if peek.is_none() {
@@ -121,6 +130,7 @@ impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T
                     log::info!("output {:?}", data.idx);
                     consumer(data.value);
                     *current.write().await -= 1;
+                    *iterations.write().await -= 1;
                 }
             }
         });

@@ -45,7 +45,7 @@ impl<T> Ord for Data<T> {
 pub type ProducerFn<T> = dyn Fn() -> T + Send + Sync;
 pub type ConsumerFn<T> = dyn Fn(T) + Send + Sync;
 
-pub struct Container<'a, 'b, T> {
+pub struct ParallelRunner<'a, 'b, T> {
     max: usize,
     iterations: Arc<RwLock<usize>>,
     current: Arc<RwLock<usize>>,
@@ -53,7 +53,7 @@ pub struct Container<'a, 'b, T> {
     producer: &'a ProducerFn<T>,
     consumer: &'b ConsumerFn<T>,
 }
-impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T> {
+impl<T: Default + Display + Send + Sync + 'static> ParallelRunner<'static, 'static, T> {
     pub fn new(max: usize, iterations: Option<usize>, producer: &'static ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
         if max < 1 {
             bail!("max is null, this isn't allowed");

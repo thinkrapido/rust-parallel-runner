@@ -48,7 +48,7 @@ pub type ConsumerFn<T> = dyn Fn(T) + Send + Sync;
 pub struct Container<'a, 'b, T> {
     max: usize,
     current: Arc<RwLock<usize>>,
-    next: usize,
+    next: Arc<RwLock<usize>>,
     producer: &'a ProducerFn<T>,
     consumer: &'b ConsumerFn<T>,
 }
@@ -60,7 +60,7 @@ impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T
         Ok(Self {
             max,
             current: Arc::new(RwLock::new(usize::MAX)),
-            next: usize::MAX,
+            next: Arc::new(RwLock::new(usize::MAX)),
             producer,
             consumer,
         })
@@ -70,20 +70,32 @@ impl<T: Default + Display + Send + Sync + 'static> Container<'static, 'static, T
 
         // init join set
         for _ in 0..self.max {
-            let next = self.next;
-            self.next -= 1;
-            let producer = self.producer;
+            let n = *self.next.read().await;
+            *self.next.write().await -= 1;
+            let p = self.producer;
             set.spawn(async move {
-                log::info!("next: {}", next);
-                (next, producer())
+                log::info!("next: {}", n);
+                (n, p())
             });
         }
 
         let bin_heap = Arc::new(RwLock::new(BinaryHeap::<Data<T>>::new()));
         let heap = bin_heap.clone();
+        let max = self.max;
+        let next = self.next.clone();
+        let producer = self.producer;
         let jh_heap = spawn(async move {
             while let Some(result) = set.join_next().await {
                 heap.write().await.push(result?.into());
+                while set.len() < max {
+                    let n = *next.read().await;
+                    *next.write().await -= 1;
+                    let p = producer;
+                    set.spawn(async move {
+                        log::info!("next: {}", n);
+                        (n, p())
+                    });
+                }
             }
             anyhow::Ok(())
         });

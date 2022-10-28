@@ -105,7 +105,7 @@ impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
                     idx.write().await.next -= 1;
                     let p = producer.clone();
                     set.spawn(async move {
-                        log::info!("next: {}", n);
+                        log::debug!("next: {}", n);
                         let Payload{idx, payload} = p(usize::MAX - n).into();
                         (usize::MAX - idx, payload)
                     });
@@ -129,14 +129,13 @@ impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
                         continue;
                     }
                     let cur = idx.read().await.current;
-                    log::info!("{} {}", peek.unwrap(), cur);
                     if peek.unwrap().lt(&cur) {
                         sleep(std::time::Duration::from_millis(5)).await;
                         continue;
                     }
                 }
                 if let Some(data) = heap.write().await.pop() {
-                    log::info!("output {:?}", data.idx);
+                    log::debug!("output {:?}", data.idx);
                     consumer(data.payload);
                     idx.write().await.current -= 1;
                     idx.write().await.iterations -= 1;

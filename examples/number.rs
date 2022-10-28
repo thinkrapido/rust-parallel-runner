@@ -8,16 +8,18 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let num = Arc::new(RwLock::new(5));
-    let p: ProducerFn<i32> = Arc::new(move || {
-        let n = *num.read();
+    let p: ProducerFn<i32> = Arc::new(move |idx| {
+        let n = idx as i32;
         *num.write() += 1;
         std::thread::sleep(std::time::Duration::from_secs(1));
-        n
+        log::info!("index: {}", idx);
+        (idx, n)
     });
 
     let mut runner = ParallelRunner::new(
         5,
-        Some(10),
+        5,
+        Some(23),
         p,
         &|item| { log::info!("eval: {}", item)}
     )?;

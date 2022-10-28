@@ -12,57 +12,65 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 
-struct Data<T> {
+struct Payload<T> {
     idx: usize,
-    value: T,
+    payload: T,
 }
-impl<T> From<(usize, T)> for Data<T> {
+impl<T> From<(usize, T)> for Payload<T> {
     fn from((idx, value): (usize, T)) -> Self {
-        Self { idx, value }
+        Self { idx, payload: value }
     }
 }
 
-impl<T> Eq for Data<T> {}
+impl<T> Eq for Payload<T> {}
 
-impl<T> PartialEq<Self> for Data<T> {
+impl<T> PartialEq<Self> for Payload<T> {
     fn eq(&self, other: &Self) -> bool {
         self.idx.eq(&other.idx)
     }
 }
 
-impl<T> PartialOrd<Self> for Data<T> {
+impl<T> PartialOrd<Self> for Payload<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.idx.partial_cmp(&other.idx)
     }
 }
 
-impl<T> Ord for Data<T> {
+impl<T> Ord for Payload<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.idx.cmp(&other.idx)
     }
 }
 
-pub type ProducerFn<T> = Arc<dyn Fn() -> T + Send + Sync>;
+pub type ProducerFn<T> = Arc<dyn Fn(usize) -> (usize, T) + Send + Sync>;
 pub type ConsumerFn<T> = dyn Fn(T) + Send + Sync;
+
+struct Idx {
+    iterations: usize,
+    start: usize,
+    current: usize,
+    next: usize,
+}
 
 pub struct ParallelRunner<'b, T> {
     max: usize,
-    iterations: Arc<RwLock<usize>>,
-    current: Arc<RwLock<usize>>,
-    next: Arc<RwLock<usize>>,
+    idx: Arc<RwLock<Idx>>,
     producer: ProducerFn<T>,
     consumer: &'b ConsumerFn<T>,
 }
 impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
-    pub fn new(max: usize, iterations: Option<usize>, producer: ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
+    pub fn new(max: usize, start_idx: usize, iterations: Option<usize>, producer: ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
         if max < 1 {
             bail!("max is null, this isn't allowed");
         }
         Ok(Self {
             max,
-            iterations: Arc::new(RwLock::new(iterations.unwrap_or(usize::MAX))),
-            current: Arc::new(RwLock::new(usize::MAX)),
-            next: Arc::new(RwLock::new(usize::MAX)),
+            idx: Arc::new(RwLock::new(Idx {
+                iterations: iterations.unwrap_or(usize::MAX),
+                start: start_idx,
+                current: usize::MAX - start_idx,
+                next: usize::MAX - start_idx,
+            })),
             producer,
             consumer,
         })
@@ -72,33 +80,34 @@ impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
 
         // init join set
         for _ in 0..self.max {
-            let n = *self.next.read().await;
-            *self.next.write().await -= 1;
+            let n = self.idx.read().await.next;
+            self.idx.write().await.next -= 1;
             let p = self.producer.clone();
             set.spawn(async move {
-                (n, p())
+                let Payload{idx, payload} = p(usize::MAX - n).into();
+                (usize::MAX - idx, payload)
             });
         }
 
-        let bin_heap = Arc::new(RwLock::new(BinaryHeap::<Data<T>>::new()));
+        let bin_heap = Arc::new(RwLock::new(BinaryHeap::<Payload<T>>::new()));
         let heap = bin_heap.clone();
         let max = self.max;
-        let next = self.next.clone();
-        let iterations = self.iterations.clone();
+        let idx = self.idx.clone();
         let producer = self.producer.clone();
         let jh_heap = spawn(async move {
             while let Some(result) = set.join_next().await {
                 heap.write().await.push(result?.into());
-                if *iterations.read().await == 0 {
+                if idx.read().await.iterations == 0 {
                     break;
                 }
                 while set.len() < max {
-                    let n = *next.read().await;
-                    *next.write().await -= 1;
+                    let n = idx.read().await.next;
+                    idx.write().await.next -= 1;
                     let p = producer.clone();
                     set.spawn(async move {
                         log::info!("next: {}", n);
-                        (n, p())
+                        let Payload{idx, payload} = p(usize::MAX - n).into();
+                        (usize::MAX - idx, payload)
                     });
                 }
             }
@@ -107,11 +116,10 @@ impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
 
         let consumer = self.consumer;
         let heap = bin_heap.clone();
-        let iterations = self.iterations.clone();
-        let current = self.current.clone();
+        let idx = self.idx.clone();
         let jh_consume = spawn(async move {
             loop {
-                if *iterations.read().await == 0 {
+                if idx.read().await.iterations == 0 {
                     break;
                 }
                 {
@@ -120,17 +128,18 @@ impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
                         sleep(std::time::Duration::from_millis(5)).await;
                         continue;
                     }
-                    let cur = current.read().await;
-                    if peek.unwrap().lt(&*cur) {
+                    let cur = idx.read().await.current;
+                    log::info!("{} {}", peek.unwrap(), cur);
+                    if peek.unwrap().lt(&cur) {
                         sleep(std::time::Duration::from_millis(5)).await;
                         continue;
                     }
                 }
                 if let Some(data) = heap.write().await.pop() {
                     log::info!("output {:?}", data.idx);
-                    consumer(data.value);
-                    *current.write().await -= 1;
-                    *iterations.write().await -= 1;
+                    consumer(data.payload);
+                    idx.write().await.current -= 1;
+                    idx.write().await.iterations -= 1;
                 }
             }
         });

@@ -42,19 +42,19 @@ impl<T> Ord for Data<T> {
     }
 }
 
-pub type ProducerFn<T> = dyn Fn() -> T + Send + Sync;
+pub type ProducerFn<T> = Arc<dyn Fn() -> T + Send + Sync>;
 pub type ConsumerFn<T> = dyn Fn(T) + Send + Sync;
 
-pub struct ParallelRunner<'a, 'b, T> {
+pub struct ParallelRunner<'b, T> {
     max: usize,
     iterations: Arc<RwLock<usize>>,
     current: Arc<RwLock<usize>>,
     next: Arc<RwLock<usize>>,
-    producer: &'a ProducerFn<T>,
+    producer: ProducerFn<T>,
     consumer: &'b ConsumerFn<T>,
 }
-impl<T: Default + Display + Send + Sync + 'static> ParallelRunner<'static, 'static, T> {
-    pub fn new(max: usize, iterations: Option<usize>, producer: &'static ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
+impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
+    pub fn new(max: usize, iterations: Option<usize>, producer: ProducerFn<T>, consumer: &'static ConsumerFn<T>) -> Result<Self> {
         if max < 1 {
             bail!("max is null, this isn't allowed");
         }
@@ -74,7 +74,7 @@ impl<T: Default + Display + Send + Sync + 'static> ParallelRunner<'static, 'stat
         for _ in 0..self.max {
             let n = *self.next.read().await;
             *self.next.write().await -= 1;
-            let p = self.producer;
+            let p = self.producer.clone();
             set.spawn(async move {
                 (n, p())
             });
@@ -85,7 +85,7 @@ impl<T: Default + Display + Send + Sync + 'static> ParallelRunner<'static, 'stat
         let max = self.max;
         let next = self.next.clone();
         let iterations = self.iterations.clone();
-        let producer = self.producer;
+        let producer = self.producer.clone();
         let jh_heap = spawn(async move {
             while let Some(result) = set.join_next().await {
                 heap.write().await.push(result?.into());
@@ -95,7 +95,7 @@ impl<T: Default + Display + Send + Sync + 'static> ParallelRunner<'static, 'stat
                 while set.len() < max {
                     let n = *next.read().await;
                     *next.write().await -= 1;
-                    let p = producer;
+                    let p = producer.clone();
                     set.spawn(async move {
                         log::info!("next: {}", n);
                         (n, p())

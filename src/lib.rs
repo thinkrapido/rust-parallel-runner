@@ -42,8 +42,8 @@ impl<T> Ord for Payload<T> {
     }
 }
 
-pub type ProducerFn<T> = Arc<dyn Fn(usize) -> (usize, T) + Send + Sync>;
-pub type ConsumerFn<T> = dyn Fn(T) + Send + Sync;
+pub type ProducerFn<Payload> = Arc<dyn Fn(usize) -> (usize, Payload) + Send + Sync>;
+pub type ConsumerFn<Payload> = dyn Fn(Payload) + Send + Sync;
 
 struct Idx {
     iterations: usize,
@@ -151,6 +151,7 @@ impl<T: Display + Send + Sync + 'static> ParallelRunner<'static, T> {
 }
 
 #[cfg(test)]
+// currently not used
 mod test {
     use anyhow::Result;
     use crate::Container;

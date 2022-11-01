@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
         let n = idx as i32;
         *num.write() += 1;
         std::thread::sleep(std::time::Duration::from_millis(1000 + rand::thread_rng().gen_range(333..3333)));
-        log::info!("index: {}", idx);
+        log::info!("pr: <<<<<<<<<<<< {}", idx);
         (idx, n)
     });
 
@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
         5,
         Some(23),
         p,
-        &|item| { log::info!("eval: {}", item)}
+        &|item| { log::info!("pr: >>>>>>>>>>>>...... {}", item)}
     )?;
     runner.run().await?;
     Ok(())
